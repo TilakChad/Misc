@@ -1,22 +1,11 @@
-#include <stdio.h>
+\#include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <string.h>
+#include <stdbool.h>
 
-typedef enum EPopType { Remove, Keep } EPopType;
-
-typedef struct PopEntryInfo {
-        int offset;
-        int length;
-} PopEntryInfo;
-
-typedef struct PopInfo {
-        EPopType type;
-        PopEntryInfo prev;
-        PopEntryInfo curr;
-} PopInfo;
-
+#define MAX_ENTRY_COUNT 32
 
 #define G_PUSHPOP_DIR_ENV "G_PUSHPOP_DIR"
 #define G_PUSHPOP_FILE "/.gpushpop"
@@ -28,6 +17,37 @@ typedef struct PopInfo {
 
 #define MAX_FILE_SIZE Bytes(1024)
 
+
+typedef struct PopEntryInfo {
+        int offset;
+        int length;
+} PopEntryInfo;
+
+#define BITS(x) (1 << (x)) 
+
+typedef enum Flags {
+	Keep    = BITS(0),
+	Remove  = BITS(1),
+	List    = BITS(2),
+	Empty   = BITS(3),
+	ShowNth = BITS(4)
+} Flags;
+
+typedef struct PopInfo {
+	Flags        flags; 
+        int          entry_count;
+	PopEntryInfo pop_entries[32]; 
+} PopInfo;
+
+// Function declarations 
+Flags parse_flags(const char** argv); 
+bool  index_files(PopInfo* pop_data, int fp); 
+bool  list_files(PopInfo* pop_data);
+void  show_last_entry(PopInfo* pop_data);
+void  show_nth_entry(PopInfo* pop_data);  // show nth entry from the last 
+
+static char buffer[MAX_FILE_SIZE];
+
 int main(int argc, char *argv[]) {
         const char *pushpop_dir = getenv(G_PUSHPOP_DIR_ENV);
         if (!pushpop_dir) {
@@ -37,15 +57,13 @@ int main(int argc, char *argv[]) {
                         fprintf(stderr, "Invalid user home directoy");
                         return -3;
                 }
-                fprintf(stderr, "using home_directory : %s.\n", pushpop_dir);
+                // fprintf(stderr, "using home directory as the base directory : %s.\n", pushpop_dir);
         }
 
         // The truncate() function could be used here instead of rewriting everything again
         // Read the whole file at once and start scanning
 
-        char buffer[MAX_FILE_SIZE];
-
-        char file_name[512] = {0};
+        char file_name[512];
         strcpy(file_name, pushpop_dir);
         strcat(file_name, G_PUSHPOP_FILE);
 
@@ -54,53 +72,101 @@ int main(int argc, char *argv[]) {
                 perror("open() failed : ");
                 return -1;
         }
+	
+        // scan the file fully while terminating on the new lines
+        PopInfo pop_data;
+	pop_data.flags = parse_flags((const char**)argv);
+	
+	if (pop_data.flags & Empty) {
+		ftruncate(fd, 0);
+		return 0;
+	}
 
-        int read_bytes = read(fd,buffer,MAX_FILE_SIZE);
-        if (read_bytes == MAX_FILE_SIZE) {
+	index_files(&pop_data,fd);
+
+	// arrays of functions
+	// handler_fn_t funcs[] = ; 
+	
+	if (pop_data.flags & List) 
+		list_files(&pop_data); 
+	if (pop_data.flags & Keep) 
+		show_last_entry(&pop_data);
+	/* if (pop_data.flags & ShowNth) */
+	/* 	show_nth_entry(&pop_data); */
+	/* if (pop_dat.flags & Remove) { */
+	/* 	remove_last(&pop_data);  */
+	/* } */
+
+        close(fd);
+	return 0;
+}
+
+Flags parse_flags(const char** argv) {
+	Flags flag = Remove;
+	
+	for (const char** ptr = argv + 1; *ptr; ptr = ptr + 1) {
+		if (!strcmp(*ptr, "-e"))
+			flag |= Empty;
+		else if (!strcmp(*ptr,"-k")) {
+			flag |= Keep;
+			flag &= ~Remove; 
+		}
+		else if (!strcmp(*ptr,"-l")) {
+			flag |= List;
+		}
+		else {
+			fprintf(stderr, "Invalid arguments passed : Accepted flags [-k] [-e] [-l] \n");
+			fprintf(stderr, "\n-k : keep the content of the stack");
+			fprintf(stderr, "\n-l : list the content of the stack");
+			fprintf(stderr, "\n-e : make the stack empty");  
+			exit(-2); 
+		}
+	}
+	return flag; 
+}
+
+bool  index_files(PopInfo* pop_data, int fd) {
+	
+	int read_bytes = read(fd,buffer,MAX_FILE_SIZE);
+
+	if (read_bytes == MAX_FILE_SIZE) {
                 fprintf(stderr, "File buffer too short, current length : %d.", read_bytes);
-                return -5;
+                exit(-5);
         }
-
+	
         buffer[read_bytes] = '\0';
 
-        // scan the file fully while terminating on the new lines
-        PopInfo pop_action;
-        pop_action.type = Remove;
+	int offset                      = 0;
+	pop_data->pop_entries[0].offset = 0; 
+	pop_data->entry_count           = 0;
+	
+	while(offset < read_bytes) {
+	    	if (buffer[offset] == '\n') { // TODO :: Handle for win32 which contains carriage returns
+			pop_data->entry_count = pop_data->entry_count + 1;
+			pop_data->pop_entries[pop_data->entry_count - 1].length = offset - pop_data->pop_entries[pop_data->entry_count - 1].offset;
+			// we could've just count the occurence of new lines and stored them into array directly
+			pop_data->pop_entries[pop_data->entry_count].offset = offset + 1; 
+			pop_data->pop_entries[pop_data->entry_count].length = 0; 
 
-        pop_action.curr.offset = 0;
-        pop_action.curr.length = 0;
+		}
+		offset = offset + 1; 
+	}
 
-        pop_action.prev.offset = 0;
-        pop_action.prev.length = 0;
+	// Index the last entry
+	// \n is left as trailing newline with no practical purpose
+	// Discard the last entry 
+}
 
-        int offset = 0;
-        while (offset < read_bytes) {
-                if (buffer[offset] == '\n') { // TODO :: Fix for windows
-                        int nlength     = offset - pop_action.prev.offset;
-                        pop_action.prev = pop_action.curr;
-                        pop_action.prev.length = nlength;
+bool  list_files(PopInfo* pop_data) {
+	printf("Listing the stack : \n");
+	for (int i = 0; i < pop_data->entry_count; ++i) {
+		printf("%d. %.*s\n",i + 1, pop_data->pop_entries[i].length - 1, buffer + pop_data->pop_entries[i].offset);  
+	}
+}
 
-                        pop_action.curr.offset = offset;
-                        pop_action.curr.length = 0; // not determined yet
-                }
-                offset = offset + 1;
-        }
-
-        // Handle the last offset by marking the current offset
-        pop_action.curr.length = offset - pop_action.curr.offset - 1;
-
-        fprintf(stderr, "Displaying the last pushed stack entry of length %d : \n", pop_action.curr.length);
-        fprintf(stderr, "%.*s", pop_action.curr.length, &buffer[pop_action.curr.offset]);
-
-
-        fprintf(stderr, "Displaying the last pushed stack entry of length %d : \n", pop_action.prev.length);
-        fprintf(stderr, "%.*s", pop_action.prev.length, &buffer[pop_action.prev.offset]);
-
-        // TODO :: The below case doesn't apply for new file
-        // FIX  ::
-
-        ftruncate(fd,pop_action.prev.offset + 1); // Since the offset is calculated just where there is new line
-        close(fd);
-
-        return 0;
+void show_last_entry(PopInfo* pop_data) {
+	if (!pop_data->entry_count)
+		return;
+	PopEntryInfo* info = &pop_data->pop_entries[pop_data->entry_count - 1]; 
+	printf("%.*s\n", info->length, &buffer[info->offset]);
 }
