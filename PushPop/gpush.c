@@ -12,7 +12,7 @@ int create_intermediate_directories();
 int main(int argc, char* argv[]) {
         if (argc < 2)
         {
-                fprintf(stderr, "Error usage : %s <dir>", argv[0]);
+                fprintf(stderr, "Error usage : %s <dir>\n", argv[0]);
                 return -2;
         }
 
@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "using home_directory : %s.\n", pushpop_dir);
         }
 
-        char file_name[256] = {0}; // improve this, probably use string with length
+        char file_name[256];// improve this, probably use string with length
         char dir_full_path[256] = {0};
 
         if (realpath(push_dir, dir_full_path) == NULL) {

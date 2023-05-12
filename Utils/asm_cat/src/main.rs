@@ -1,12 +1,13 @@
 #[derive(Debug)]
 struct Color(&'static str);
 
-const Red     : Color = Color("\033[03m");
-const Blue    : Color = Color("");
-const Green   : Color = Color("");
-const Yellow  : Color = Color("");
-const Magenta : Color = Color("");
-const Cyan    : Color = Color("");
+const Red     : Color = Color("\033[31m");
+const Blue    : Color = Color("\033[34m");
+const Green   : Color = Color("\033[32m");
+const Yellow  : Color = Color("\033[33m");
+const Magenta : Color = Color("\033[90m");  // its actually green color used now 
+const Cyan    : Color = Color("\033[96m");
+const Default : Color = Color("\033[0m");
 
 #[derive(Debug)]
 struct ColorInfo {
@@ -21,7 +22,8 @@ struct ColorInfo {
 struct Metadata {
        colors_for : ColorInfo,
        keywords   : Vec<String>,
-       registers  : Vec<String>,  
+       registers  : Vec<String>,
+       labels     : Vec<(String, u32)>
 }
 
 #[derive(Debug)]
@@ -32,29 +34,28 @@ struct SourceInfo {
 // Form the token stream and parse the whole file as required
 // Well, well, might need to write whole tokenizer and parser for this. 
 
+// TODO:: Seperate str on a seperate field 
 enum Token<'a> {
      Keyword(&'a str), // or assembly instruction 
      Register(&'a str),
      Label(&'a str),
      Comments(&'a str),
-     None
-}
-
-enum ParsedToken<'a> {
      AlphaNumeric(&'a str),
      Colon,
      Comma,
-     LeftBracket,
-     RightBrackt,
-     None 
+     Ampersand,
+     Hash,
+     Asterisk, 
+     None
 }
 
 struct Tokenizer<'a>  {
        pos	   : usize,
-       length 	   : usize, 
-       raw_bytes   : &'a [u8],
+       length 	   : usize,
+       line        : u32, 
        current_token : Token<'a>,
        next_token    : Token<'a>,
+       raw_bytes   : &'a [u8],
 }
 
 fn is_ascii_alpha(v : u8) -> bool {
@@ -69,6 +70,7 @@ impl<'a> Tokenizer<'a> {
      fn init(src : &'a str) -> Self {
      	Tokenizer {
 		  pos		: 0,
+		  line 		: 0, 
 		  length 	: src.len(),
 		  raw_bytes 	: src.as_bytes(),
 		  current_token : Token::None,
@@ -79,9 +81,15 @@ impl<'a> Tokenizer<'a> {
      fn next_token(&mut self) -> Token<'a> {
      	    // continue until next character is found
 	    // should start with alphabet
-	    let parsed_token = ParsedToken::None;
 	    let start 	     = self.pos;
-	    
+
+
+	    // skip any whitespace characters
+	    while self.raw_bytes[self.pos] == b' ' || self.raw_bytes[self.pos] == b'\t' || self.raw_bytes[self.pos] == b'\n' {
+	    	  self.pos = self.pos + 1; 
+	    }
+
+	    // TODO :: Refactor all the codes with pattern matching 
 	    // TODO :: Append with an very unlikely character to reduce checks and speed up the parsing process
 	    if is_ascii_alpha(self.raw_bytes[self.pos]) {
 		self.pos = self.pos + 1;
@@ -92,9 +100,36 @@ impl<'a> Tokenizer<'a> {
 		}
 		// decide if the obtained string is any keywords
 		// check if the source code actually compiles
+		// This function can't fail 
 		println!("String parsed so far : {}.", std::str::from_utf8(&self.raw_bytes[start..self.pos]).unwrap());
+		let ref_val = std::str::from_utf8(&self.raw_bytes[start..self.pos]).unwrap();
+		if check_if_keyword(ref_val) {
+		   return Token::Keyword(ref_val);
+		}
+		if check_if_register(ref_val) {
+		   return Token::Register(ref_val);
+		}
+		// can't check for label without next string
+		return Token::AlphaNumeric(ref_val); 
 	    }
 
+	    match self.raw_bytes[self.pos] {
+	    	  b':' => {
+		       return Token::Colon;
+		       }
+		  b',' => {
+		       return Token::Comma;
+		       }
+		  b'*' => {
+		       return Token::Asterisk;
+		       }
+		  b'&' => {
+		       return Token::Ampersand;
+		       }
+		  default => {
+		  }
+	    }
+	    	    
 	    return Token::None; 
      }
 
@@ -103,13 +138,16 @@ impl<'a> Tokenizer<'a> {
      }
 }
 
-fn check_if_keyword() {
+fn check_if_keyword(tok : &str) -> bool {
+   false
 }
 
-fn check_if_register() {
+fn check_if_register(tok : &str) -> bool {
+   false
 }
 
-fn check_if_label() {
+fn check_if_label(tok : &str) -> bool {
+   false
 }
 
 

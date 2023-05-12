@@ -1,4 +1,4 @@
-\#include <stdio.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -44,7 +44,8 @@ Flags parse_flags(const char** argv);
 bool  index_files(PopInfo* pop_data, int fp); 
 bool  list_files(PopInfo* pop_data);
 void  show_last_entry(PopInfo* pop_data);
-void  show_nth_entry(PopInfo* pop_data);  // show nth entry from the last 
+void  pop_last_entry(PopInfo* pop_data, int fd); 
+void  show_nth_entry(PopInfo* pop_data, int n);  // show nth entry from the last 
 
 static char buffer[MAX_FILE_SIZE];
 
@@ -91,19 +92,20 @@ int main(int argc, char *argv[]) {
 		list_files(&pop_data); 
 	if (pop_data.flags & Keep) 
 		show_last_entry(&pop_data);
-	/* if (pop_data.flags & ShowNth) */
-	/* 	show_nth_entry(&pop_data); */
-	/* if (pop_dat.flags & Remove) { */
-	/* 	remove_last(&pop_data);  */
-	/* } */
-
+	if (pop_data.flags & ShowNth)
+		show_nth_entry(&pop_data, 3);
+	if (pop_data.flags & Remove && !(pop_data.flags & List)) {
+	        show_last_entry(&pop_data); 
+		pop_last_entry(&pop_data, fd);
+	}
         close(fd);
 	return 0;
 }
 
 Flags parse_flags(const char** argv) {
 	Flags flag = Remove;
-	
+
+	// TODO :: Fix the files orderings :
 	for (const char** ptr = argv + 1; *ptr; ptr = ptr + 1) {
 		if (!strcmp(*ptr, "-e"))
 			flag |= Empty;
@@ -159,8 +161,8 @@ bool  index_files(PopInfo* pop_data, int fd) {
 
 bool  list_files(PopInfo* pop_data) {
 	printf("Listing the stack : \n");
-	for (int i = 0; i < pop_data->entry_count; ++i) {
-		printf("%d. %.*s\n",i + 1, pop_data->pop_entries[i].length - 1, buffer + pop_data->pop_entries[i].offset);  
+	for (int i = pop_data->entry_count - 1; i >=0 ; --i) {
+		printf("%d. %.*s\n",pop_data->entry_count - i, pop_data->pop_entries[i].length, buffer + pop_data->pop_entries[i].offset);  
 	}
 }
 
@@ -170,3 +172,26 @@ void show_last_entry(PopInfo* pop_data) {
 	PopEntryInfo* info = &pop_data->pop_entries[pop_data->entry_count - 1]; 
 	printf("%.*s\n", info->length, &buffer[info->offset]);
 }
+
+void pop_last_entry(PopInfo* pop_data, int fd) {
+	if(!pop_data->entry_count)
+		return;
+	PopEntryInfo* info = &pop_data->pop_entries[pop_data->entry_count-1];
+	ftruncate(fd, info->offset); 
+}
+
+void show_nth_entry(PopInfo* pop_data, int n) {
+	if (!pop_data->entry_count)
+		return;
+	int total_items = pop_data->entry_count - 1;
+	if (n > total_items)
+	{
+		fprintf(stderr, "Invalid entry\n"); 
+		exit(-1); 
+	}
+	int req_entry = total_items + 1 - n;
+	PopEntryInfo* entry = &pop_data->pop_entries[req_entry];
+	printf("%.*s\n", entry->length, &buffer[entry->offset]); 
+}
+		
+		
