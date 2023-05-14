@@ -2,6 +2,8 @@
 #+title: Alternate emacs configuration 
 #+email: tilakchad111@gmail.com 
 
+#+OPTIONS: ^:nil 
+
 * Emacs
 
 ** Alternative emacs configuration
@@ -24,7 +26,7 @@ It comes handy to switch between *vanilla* emacs (custom conf) and installed *do
 (setq package-user-dir (concat emacs_home "elpa"))
 (add-to-list 'load-path (concat emacs_home "elpa"))
 
-(set-face-attribute 'default nil :font "Fira Code-18")
+(set-face-attribute 'default nil :font "Fira Code-15")
 
 (add-hook 'c-mode-common-hook
 	  ( lambda()
@@ -37,7 +39,28 @@ It comes handy to switch between *vanilla* emacs (custom conf) and installed *do
 ;; load installed package
 (package-initialize) 
 ;; like ivy-mode 
-;; (ivy-mode)
+(ivy-mode)
+
+;; mode to convert from org -> github markdown using pandoc
+
+(add-hook 'org-mode-hook
+	  (lambda () 
+	  (defun get_default_or_supplied (out-file)
+	    (if (eq (length out-file) 0)
+		(concat (file-name-directory buffer-file-name) (format "%s.md" (file-name-base buffer-file-name)))
+	      (format "%s.md" out-file)))
+	  
+	  
+
+	  (defun convert-to-gfm (out-file)
+	    (interactive (list
+			  (read-string (format "Output file [default : %s.md] : " (file-name-base buffer-file-name)))))
+	    (let ((file_wrote (get_default_or_supplied out-file)))
+	      (shell-command (format "pandoc --from=org --to=gfm %s > %s" buffer-file-name file_wrote))
+	      (message "Saved to >> %s" file_wrote)))
+	  )				
+)
+
 
 #+END_SRC 
 
