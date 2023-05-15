@@ -1,35 +1,35 @@
 // Well this might end up being actually an assembler too
-// Labels and calls can't be identified in a single pass, so gotta do a double-pass just for syntax highlighting ???  
+// Labels and calls can't be identified in a single pass, so gotta do a double-pass just for syntax highlighting ???
 
 #[derive(Debug)]
 struct Color(&'static str);
 
-// Size of each escaped color sequence is 5 
-const Red: Color       = Color("\x1b[31m");
-const Blue: Color      = Color("\x1b[34m");
-const Green: Color     = Color("\x1b[32m");
-const Yellow: Color    = Color("\x1b[33m");
-const Magenta: Color   = Color("\x1b[90m"); // its actually gray color being used now instead of Magenta color
-const Cyan: Color      = Color("\x1b[96m");
-const Default: Color   = Color("\x1b[0m");
+// Size of each escaped color sequence is 5
+const Red: Color = Color("\x1b[31m");
+const Blue: Color = Color("\x1b[34m");
+const Green: Color = Color("\x1b[32m");
+const Yellow: Color = Color("\x1b[33m");
+const Magenta: Color = Color("\x1b[90m"); // its actually gray color being used now instead of Magenta color
+const Cyan: Color = Color("\x1b[96m");
+const Default: Color = Color("\x1b[0m");
 
 #[derive(Debug)]
 struct ColorInfo {
-    registers : Color,
-    keywords  : Color,
-    immediate : Color,
-    labels    : Color,
-    comments  : Color,
+    registers: Color,
+    keywords: Color,
+    immediate: Color,
+    labels: Color,
+    comments: Color,
 }
 
 #[derive(Debug)]
 struct SourceMetadata<'a> {
-    colors_for	      : ColorInfo,
-    keywords	      : Vec<&'a str>,
-    registers	      : Vec<&'a str>,
-    labels	      : Vec<(&'a str, u32)>,
+    colors_for: ColorInfo,
+    keywords: Vec<&'a str>,
+    registers: Vec<&'a str>,
+    indexed_labels: Vec<(&'a str, u32)>,
 
-    output_src 	      : Vec<String> // each line represented in each vector 
+    output_src: Vec<String>, // each line represented in each vector
 }
 
 #[derive(Debug)]
@@ -54,6 +54,10 @@ enum Token<'a> {
     Ampersand,
     Hash,
     Asterisk,
+    LeftBracket,
+    RightBracket,
+    LeftParen,
+    RightParen,
     None,
 }
 
@@ -75,7 +79,7 @@ fn is_ascii_num(v: u8) -> bool {
 }
 
 impl<'a> Tokenizer<'a> {
-    fn init(src: &'a str) -> Self {
+    fn new(src: &'a str) -> Self {
         Tokenizer {
             pos: 0,
             line: 0,
@@ -86,15 +90,29 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    fn init(&mut self) {
+        self.next_token = self.next_token_internal();
+    }
+
     fn next_token(&mut self) -> Token<'a> {
+        let upcoming_token = self.next_token_internal();
+        return std::mem::replace(&mut self.next_token, upcoming_token);
+    }
+
+    fn lookahead_token(&mut self) -> &Token<'a> {
+        return &self.next_token;
+    }
+
+    fn next_token_internal(&mut self) -> Token<'a> {
         // continue until next character is found
         let start = self.pos;
 
         // skip any whitespace characters
         let mut whitespace_chars = false;
-        while self.pos < self.length && (self.raw_bytes[self.pos] == b' '
-            || self.raw_bytes[self.pos] == b'\t'
-            || self.raw_bytes[self.pos] == b'\n')
+        while self.pos < self.length
+            && (self.raw_bytes[self.pos] == b' '
+                || self.raw_bytes[self.pos] == b'\t'
+                || self.raw_bytes[self.pos] == b'\n')
         {
             whitespace_chars = true;
             self.pos = self.pos + 1;
@@ -106,9 +124,9 @@ impl<'a> Tokenizer<'a> {
             );
         }
 
-	if self.pos >= self.length {
-	   return Token::None;
-	}
+        if self.pos >= self.length {
+            return Token::None;
+        }
         // TODO :: Refactor all the codes with pattern matching
         // TODO :: Append with an very unlikely character to reduce checks and speed up the parsing process
         if is_ascii_alpha(self.raw_bytes[self.pos]) {
@@ -121,94 +139,119 @@ impl<'a> Tokenizer<'a> {
             {
                 self.pos = self.pos + 1;
             }
-            // decide if the obtained string is any keywords
-            // check if the source code actually compiles
-            // This function can't fail
-            println!(
-                "String parsed so far : {} at {}.",
-                std::str::from_utf8(&self.raw_bytes[start..self.pos]).unwrap(),
-                self.pos
-            );
             let ref_val = std::str::from_utf8(&self.raw_bytes[start..self.pos]).unwrap();
-            if check_if_keyword(ref_val) {
-                return Token::Keyword(ref_val);
-            }
-            if check_if_register(ref_val) {
-                return Token::Register(ref_val);
-            }
-            // can't check for label without next string
             return Token::AlphaNumeric(ref_val);
         }
 
-	let symbols =  match self.raw_bytes[self.pos] {
-            b':' =>  Some(Token::Colon),
-            b',' =>  Some(Token::Comma),
-            b'*' =>  Some(Token::Asterisk),
-            b'&' =>  Some(Token::Ampersand),
-           _     => None
+        let symbols = match self.raw_bytes[self.pos] {
+            b':' => Some(Token::Colon),
+            b',' => Some(Token::Comma),
+            b'*' => Some(Token::Asterisk),
+            b'&' => Some(Token::Ampersand),
+            b'[' => Some(Token::LeftBracket),
+            b']' => Some(Token::RightBracket),
+            b'(' => Some(Token::LeftParen),
+            b')' => Some(Token::RightParen),
+            _ => None,
         };
-	if symbols.is_some() {
-           self.pos = self.pos + 1;
-	   return symbols.unwrap();
-	}
+        if symbols.is_some() {
+            self.pos = self.pos + 1;
+            return symbols.unwrap();
+        }
 
         return Token::None;
     }
+}
 
-    fn lookahead_token(&mut self) -> Token<'a> {
-        return Token::None;
+impl<'a> SourceMetadata<'a> {
+    fn check_if_keyword(&self, tok: &str) -> bool {
+        self.keywords.contains(&tok)
+    }
+
+    fn check_if_register(&self, tok: &str) -> bool {
+        self.registers.contains(&tok)
+    }
+
+    fn print_final(&self) {
+        for x in &self.output_src {
+            println!("{}", x);
+        }
     }
 }
 
-fn check_if_keyword(tok: &str) -> bool {
-    false
-}
-
-fn check_if_register(tok: &str) -> bool {
-    false
-}
-
-fn check_if_label(tok: &str) -> bool {
-    false
-}
-
-
-
-fn print_source(token_stream: &mut Tokenizer, src_metadata : &mut SourceMetadata) {
+fn print_source<'a>(token_stream: &mut Tokenizer<'a>, src_metadata: &mut SourceMetadata<'a>) {
     let mut token = token_stream.next_token();
     println!("\n\nPrinitng formated source : ");
-    
+
     while token != Token::None {
         match token {
-            Token::Register(x) => {
-       	        println!(" Reg : {}\n", x);
-		println!("{}{x}{}", src_metadata.colors_for.registers.0,Default.0); 
-            }
             Token::AlphaNumeric(x) => {
-                if token_stream.lookahead_token() == Token::Colon {
-                    println!("Found label : {}\n", x);
+                if src_metadata.check_if_register(x) {
+                    std::fmt::write(
+                        src_metadata.output_src.last_mut().unwrap(),
+                        format_args!("{}{x}{}", src_metadata.colors_for.registers.0, Default.0),
+                    )
+                    .unwrap();
+                } else if src_metadata.check_if_keyword(x) {
+                    std::fmt::write(
+                        src_metadata.output_src.last_mut().unwrap(),
+                        format_args!("{}{x}{}", src_metadata.colors_for.keywords.0, Default.0),
+                    )
+                    .unwrap();
                 } else {
-                    println!("Plain alpha numeric token");
-		    println!("{}{x}{}", Red.0, Default.0); 
-		    
+                    if token_stream.lookahead_token() == &Token::Colon {
+                        // its an offset, write it and index into the source too
+                        let row = src_metadata.indexed_labels.len();
+                        src_metadata.indexed_labels.push((x, row as u32));
+                        std::fmt::write(
+                            src_metadata.output_src.last_mut().unwrap(),
+                            format_args!("{x}:"),
+                        )
+                        .unwrap();
+                        token_stream.next_token();
+                    } else {
+                        std::fmt::write(
+                            src_metadata.output_src.last_mut().unwrap(),
+                            format_args!("{x}"),
+                        )
+                        .unwrap();
+                    }
                 }
             }
 
+            // TODO :: Replace with bindings
             Token::Colon => {
-                println!("colon");
+                src_metadata.output_src.last_mut().unwrap().push(':');
             }
             Token::Comma => {
-                println!("comma");
+                src_metadata.output_src.last_mut().unwrap().push(',');
             }
-	    Token::WhiteSpaceChar(x) => {
-	        // iterate over new lines
-		for ch in x {
-		    if ch == b'\n' {
-		       src_metadata.output_src.push(String::new()); 
-		    }
-		}
-	    }
-            _ => {}
+            Token::LeftBracket => {
+                src_metadata.output_src.last_mut().unwrap().push('[');
+            }
+            Token::RightBracket => {
+                src_metadata.output_src.last_mut().unwrap().push(']');
+            }
+            Token::LeftParen => {
+                src_metadata.output_src.last_mut().unwrap().push('(');
+            }
+            Token::RightParen => {
+                src_metadata.output_src.last_mut().unwrap().push(')');
+            }
+
+            Token::WhiteSpaceChars(x) => {
+                // iterate over new lines
+                for ch in x.bytes() {
+                    if ch == b'\n' {
+                        src_metadata.output_src.push(String::new());
+                    } else {
+                        src_metadata.output_src.last_mut().unwrap().push(ch as char);
+                    }
+                }
+            }
+            _ => {
+                println!("Invalid symbol/literals found");
+            }
         }
         token = token_stream.next_token();
     }
@@ -218,23 +261,32 @@ fn main() {
     println!("Formatting asm source code : ");
 
     let color_info = ColorInfo {
-    	keywords   : Blue,
-	registers  : Red,
-	immediate  : Yellow,
-	labels     : Cyan,
-	comments   : Magenta
-        };
+        keywords: Blue,
+        registers: Red,
+        immediate: Yellow,
+        labels: Cyan,
+        comments: Magenta,
+    };
 
-    
-    let src_metadata = SourceMetadata {
-    	keywords   : vec!("mov", "lea", "sti", "cli", "xor","and", "or", "not"), 
-	registers  : vec!("eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp", "ss", "es", "ds", "cs"), 
-	colors_for : color_info, 
-	labels     : Vec::new()
-        }; 	 
+    let mut src_metadata = SourceMetadata {
+        keywords: vec!["mov", "lea", "sti", "cli", "xor", "and", "or", "not"],
+        registers: vec![
+            "eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp", "ss", "es", "ds", "cs",
+        ],
+        colors_for: color_info,
+        indexed_labels: Vec::new(),
+        output_src: Vec::new(),
+    };
 
-    let source_code = String::from("mov eax, ebx\n");
-    
-    let mut tokenizer = Tokenizer::init(&source_code);
-    print_source(&mut tokenizer,&mut src_metadata);
+    src_metadata.output_src.push(String::new());
+
+    let source_code = String::from("mov eax, ebx\nlea ebx, [offset]\noffset:");
+
+    let mut tokenizer = Tokenizer::new(&source_code);
+    tokenizer.init();
+
+    print_source(&mut tokenizer, &mut src_metadata);
+
+    println!("Printing the final version : \n");
+    src_metadata.print_final();
 }
