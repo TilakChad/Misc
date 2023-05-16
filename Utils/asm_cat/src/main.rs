@@ -22,6 +22,22 @@ struct ColorInfo {
     comments: Color,
 }
 
+// One restriction that applies to the label is that it should be at the start of the respective lines
+// It it isn't the case, the label isn't indexed
+// PatchMetadata is operated immediately after the
+#[derive(Debug)]
+struct PatchMetadata<'a> {
+    row: u32,
+    offset: u32,
+    label: &'a str, // the label that is to be searched for and jumped to
+}
+
+#[derive(Debug)]
+struct Visualizer {
+    // It contains data for representing the flows of jmp instructions and such
+    visualization_data: Vec<(u32, u32, usize)>, // startX, startY and target label index
+}
+
 #[derive(Debug)]
 struct SourceMetadata<'a> {
     colors_for: ColorInfo,
@@ -30,6 +46,8 @@ struct SourceMetadata<'a> {
     indexed_labels: Vec<(&'a str, u32)>,
 
     output_src: Vec<String>, // each line represented in each vector
+    patch_data: Vec<PatchMetadata<'a>>,
+    visualizer: Visualizer,
 }
 
 #[derive(Debug)]
@@ -69,6 +87,10 @@ struct Tokenizer<'a> {
     next_token: Token<'a>,
     raw_bytes: &'a [u8],
 }
+
+mod draw;
+
+use draw::VisualizePolicy; 
 
 fn is_ascii_alpha(v: u8) -> bool {
     (v >= b'a' && v <= b'z') || (v >= b'A' && v <= b'Z')
@@ -177,6 +199,20 @@ impl<'a> SourceMetadata<'a> {
             println!("{}", x);
         }
     }
+
+    fn patch_visualization_data(&mut self) {
+	for x in &self.patch_data {
+	    let index = self.indexed_labels.iter().find(|y| y.0 == x.label).unwrap();
+	    self.visualizer.visualization_data.push((x.row,x.offset,index.1 as usize)); 
+	}
+    }
+
+    fn visualize_jmps(&mut self, vpolicy : VisualizePolicy) {
+	let filled_blanks = std::iter::repeat(' ').take(vpolicy.begin_gap as usize).collect::<String>(); 
+	for mut line in &mut self.output_src {
+	    *line = filled_blanks.clone() + &line; 
+	}
+    }
 }
 
 fn print_source<'a>(token_stream: &mut Tokenizer<'a>, src_metadata: &mut SourceMetadata<'a>) {
@@ -198,10 +234,12 @@ fn print_source<'a>(token_stream: &mut Tokenizer<'a>, src_metadata: &mut SourceM
                         format_args!("{}{x}{}", src_metadata.colors_for.keywords.0, Default.0),
                     )
                     .unwrap();
+                    // if the instruction is jump or call or its variant, either add to the patch up data or add to the visualization data
+                    handle_jump_call(x, token_stream, src_metadata);
                 } else {
                     if token_stream.lookahead_token() == &Token::Colon {
                         // its an offset, write it and index into the source too
-                        let row = src_metadata.indexed_labels.len();
+                        let row = src_metadata.output_src.len();
                         src_metadata.indexed_labels.push((x, row as u32));
                         std::fmt::write(
                             src_metadata.output_src.last_mut().unwrap(),
@@ -257,6 +295,58 @@ fn print_source<'a>(token_stream: &mut Tokenizer<'a>, src_metadata: &mut SourceM
     }
 }
 
+fn handle_jump_call<'a>(
+    ins: &str,
+    token_stream: &mut Tokenizer<'a>,
+    src_metadata: &mut SourceMetadata<'a>,
+) {
+    // call doesn't have segment:offset jumping ig, might be wrong though
+    // jmp have that kind of addressing modes, but let's handle them similarly here
+    match ins {
+        "jmp" | "ajmp" | "ljmp" | "call" | "acall" => {
+            // Match the next token, which gotta be a label or immediate
+            // assuming directly label for now
+            let mut token = token_stream.next_token();
+	    if let Token::WhiteSpaceChars(x) = token {
+		src_metadata.output_src.last_mut().unwrap().push_str(x); 
+	    }
+	    token = token_stream.next_token(); 
+            if let Token::AlphaNumeric(x) = token {
+                // see if label has already been resolved
+                if let Some(line) = filter_indexed_label_naively(&src_metadata, x) {
+                    // TODO :: Filter by just the first components, do the projection
+		    // Add to the visualization data
+		    let tuple = (src_metadata.output_src.len() as u32, src_metadata.output_src.last().unwrap().len() as u32,
+				 line as usize); 
+		    src_metadata.visualizer.visualization_data.push(tuple); 
+                } else {
+                    // Index into the PatchMetadata
+                    let patch_data = PatchMetadata {
+                        row: src_metadata.output_src.len() as u32,
+                        offset: src_metadata.output_src.last().unwrap().len() as u32,
+                        label: x,
+                    };
+                    src_metadata.patch_data.push(patch_data);
+                }
+		// In either case write the offset to the string properly
+		src_metadata.output_src.last_mut().unwrap().push_str(x); 
+            } else {
+		println!("Invalid token found after jmp/call instruction"); 
+	    }
+        }
+        _ => {}
+    }
+}
+
+fn filter_indexed_label_naively(src_metadata: &SourceMetadata, label: &str) -> Option<u32> {
+    for x in &src_metadata.indexed_labels {
+        if x.0 == label {
+            return Some(x.1);
+        }
+    }
+    return None
+}
+
 fn main() {
     println!("Formatting asm source code : ");
 
@@ -269,18 +359,23 @@ fn main() {
     };
 
     let mut src_metadata = SourceMetadata {
-        keywords: vec!["mov", "lea", "sti", "cli", "xor", "and", "or", "not"],
+        keywords: vec!["mov", "lea", "sti", "cli", "xor", "and", "or", "not", "jmp", "call"],
         registers: vec![
             "eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp", "ss", "es", "ds", "cs",
         ],
         colors_for: color_info,
         indexed_labels: Vec::new(),
         output_src: Vec::new(),
+        patch_data: Vec::new(),
+        visualizer: Visualizer {
+            visualization_data: Vec::new(),
+        },
     };
 
     src_metadata.output_src.push(String::new());
 
-    let source_code = String::from("mov eax, ebx\nlea ebx, [offset]\noffset:");
+    let source_code =
+        String::from("\tjmp notoffset\n\tmov eax, ebx\n\tjmp offset\n\tlea ebx, [offset]\noffset: \n\tmov ecx, dword ptr [eax]\nnotoffset:\n\tmov ecx, edx");
 
     let mut tokenizer = Tokenizer::new(&source_code);
     tokenizer.init();
@@ -288,5 +383,10 @@ fn main() {
     print_source(&mut tokenizer, &mut src_metadata);
 
     println!("Printing the final version : \n");
+    src_metadata.print_final();
+    println!("Obtained patch data : {:?}.", src_metadata.patch_data);
+    src_metadata.patch_visualization_data();
+    println!("Debug printing the visualization data : {:?}.", src_metadata.visualizer);
+    src_metadata.visualize_jmps(draw::VisualizePolicy{ begin_gap:25, end_gap:25});
     src_metadata.print_final();
 }
