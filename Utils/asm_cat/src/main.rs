@@ -35,7 +35,7 @@ struct PatchMetadata<'a> {
 #[derive(Debug)]
 struct Visualizer {
     // It contains data for representing the flows of jmp instructions and such
-    visualization_data: Vec<(u32, u32, usize)>, // startX, startY and target label index
+    visualization_data: Vec<(u32, u32, u32, u32)>, // startX, startY and target label index
 }
 
 #[derive(Debug)]
@@ -90,7 +90,7 @@ struct Tokenizer<'a> {
 
 mod draw;
 
-use draw::VisualizePolicy; 
+use draw::VisualizePolicy;
 
 fn is_ascii_alpha(v: u8) -> bool {
     (v >= b'a' && v <= b'z') || (v >= b'A' && v <= b'Z')
@@ -201,17 +201,21 @@ impl<'a> SourceMetadata<'a> {
     }
 
     fn patch_visualization_data(&mut self) {
-	for x in &self.patch_data {
-	    let index = self.indexed_labels.iter().find(|y| y.0 == x.label).unwrap();
-	    self.visualizer.visualization_data.push((x.row,x.offset,index.1 as usize)); 
-	}
+        for x in &self.patch_data {
+            let index = self.indexed_labels.iter().find(|y| y.0 == x.label).unwrap();
+            self.visualizer
+                .visualization_data
+                .push((x.row, x.offset, index.1, 0));
+        }
     }
 
-    fn visualize_jmps(&mut self, vpolicy : VisualizePolicy) {
-	let filled_blanks = std::iter::repeat(' ').take(vpolicy.begin_gap as usize).collect::<String>(); 
-	for mut line in &mut self.output_src {
-	    *line = filled_blanks.clone() + &line; 
-	}
+    fn visualize_jmps(&mut self, vpolicy: VisualizePolicy) {
+        let filled_blanks = std::iter::repeat(' ')
+            .take(vpolicy.begin_gap as usize)
+            .collect::<String>();
+        for mut line in &mut self.output_src {
+            *line = filled_blanks.clone() + &line;
+        }
     }
 }
 
@@ -307,18 +311,22 @@ fn handle_jump_call<'a>(
             // Match the next token, which gotta be a label or immediate
             // assuming directly label for now
             let mut token = token_stream.next_token();
-	    if let Token::WhiteSpaceChars(x) = token {
-		src_metadata.output_src.last_mut().unwrap().push_str(x); 
-	    }
-	    token = token_stream.next_token(); 
+            if let Token::WhiteSpaceChars(x) = token {
+                src_metadata.output_src.last_mut().unwrap().push_str(x);
+            }
+            token = token_stream.next_token();
             if let Token::AlphaNumeric(x) = token {
                 // see if label has already been resolved
                 if let Some(line) = filter_indexed_label_naively(&src_metadata, x) {
                     // TODO :: Filter by just the first components, do the projection
-		    // Add to the visualization data
-		    let tuple = (src_metadata.output_src.len() as u32, src_metadata.output_src.last().unwrap().len() as u32,
-				 line as usize); 
-		    src_metadata.visualizer.visualization_data.push(tuple); 
+                    // Add to the visualization data
+                    let tuple = (
+                        src_metadata.output_src.len() as u32,
+                        src_metadata.output_src.last().unwrap().len() as u32,
+                        line,
+                        0,
+                    );
+                    src_metadata.visualizer.visualization_data.push(tuple);
                 } else {
                     // Index into the PatchMetadata
                     let patch_data = PatchMetadata {
@@ -328,11 +336,11 @@ fn handle_jump_call<'a>(
                     };
                     src_metadata.patch_data.push(patch_data);
                 }
-		// In either case write the offset to the string properly
-		src_metadata.output_src.last_mut().unwrap().push_str(x); 
+                // In either case write the offset to the string properly
+                src_metadata.output_src.last_mut().unwrap().push_str(x);
             } else {
-		println!("Invalid token found after jmp/call instruction"); 
-	    }
+                println!("Invalid token found after jmp/call instruction");
+            }
         }
         _ => {}
     }
@@ -344,8 +352,12 @@ fn filter_indexed_label_naively(src_metadata: &SourceMetadata, label: &str) -> O
             return Some(x.1);
         }
     }
-    return None
+    return None;
 }
+
+// Need some experience reducing dependencies
+// so moved this function to another module
+fn determine_optimal_visualizer_lanes(visualizer_data: &mut Visualizer) {}
 
 fn main() {
     println!("Formatting asm source code : ");
@@ -359,7 +371,9 @@ fn main() {
     };
 
     let mut src_metadata = SourceMetadata {
-        keywords: vec!["mov", "lea", "sti", "cli", "xor", "and", "or", "not", "jmp", "call"],
+        keywords: vec![
+            "mov", "lea", "sti", "cli", "xor", "and", "or", "not", "jmp", "call",
+        ],
         registers: vec![
             "eax", "ebx", "ecx", "edx", "esi", "edi", "esp", "ebp", "ss", "es", "ds", "cs",
         ],
@@ -375,7 +389,7 @@ fn main() {
     src_metadata.output_src.push(String::new());
 
     let source_code =
-        String::from("\tjmp notoffset\n\tmov eax, ebx\n\tjmp offset\n\tlea ebx, [offset]\noffset: \n\tmov ecx, dword ptr [eax]\nnotoffset:\n\tmov ecx, edx");
+        String::from("\tjmp notoffset\n\tmov eax, ebx\n\tjmp offset\n\tlea ebx, [offset]\noffset: \n\tmov ecx, dword ptr [eax]\nnotoffset:\n\tmov ecx, edx\n\tcall offset");
 
     let mut tokenizer = Tokenizer::new(&source_code);
     tokenizer.init();
@@ -386,7 +400,28 @@ fn main() {
     src_metadata.print_final();
     println!("Obtained patch data : {:?}.", src_metadata.patch_data);
     src_metadata.patch_visualization_data();
-    println!("Debug printing the visualization data : {:?}.", src_metadata.visualizer);
-    src_metadata.visualize_jmps(draw::VisualizePolicy{ begin_gap:25, end_gap:25});
+    println!(
+        "Debug printing the visualization data : {:?}.",
+        src_metadata.visualizer
+    );
+    src_metadata.visualize_jmps(draw::VisualizePolicy {
+        begin_gap: 20,
+        end_gap: 20,
+    });
+    src_metadata.print_final();
+
+    // draw::draw_line_internal(&mut src_metadata.output_src, &draw::Point { x : 1, y : 1}, &draw::Point {x : 7, y : 7}, 10);
+
+    let (x0, y0, y1, lane) = src_metadata.visualizer.visualization_data[0];
+    draw::draw_line_internal(
+        &mut src_metadata.output_src,
+        &draw::Point { x: y0, y: x0 - 1 },
+        &draw::Point {
+            x: y0,
+            y: (y1 - 1) as u32,
+        },
+        10,
+    );
+    println!("Printing with visualization enabled : ");
     src_metadata.print_final();
 }
