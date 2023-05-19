@@ -357,7 +357,20 @@ fn filter_indexed_label_naively(src_metadata: &SourceMetadata, label: &str) -> O
 
 // Need some experience reducing dependencies
 // so moved this function to another module
-fn determine_optimal_visualizer_lanes(visualizer_data: &mut Visualizer) {}
+fn determine_optimal_visualizer_lanes(visualizer: &mut Visualizer) {
+    // Going some functional
+    let points = visualizer
+        .visualization_data
+        .iter()
+        .map(|(y0, _, y1, _)| draw::Point { x: *y0, y: *y1 })
+        .collect();
+    let lanes = draw::determine_optimal_lanes(points);
+    assert!(visualizer.visualization_data.len() == lanes.len());
+
+    for (lane_value, jmp_data) in std::iter::zip(lanes, &mut visualizer.visualization_data) {
+        jmp_data.3 = lane_value;
+    }
+}
 
 fn main() {
     println!("Formatting asm source code : ");
@@ -389,8 +402,9 @@ fn main() {
     src_metadata.output_src.push(String::new());
 
     let source_code =
-        String::from("\tjmp notoffset\n\tmov eax, ebx\n\tjmp offset\n\tlea ebx, [offset]\noffset: \n\tmov ecx, dword ptr [eax]\nnotoffset:\n\tmov ecx, edx\n\tcall offset");
+         String::from("\tjmp notoffset\n\tmov eax, ebx\n\tjmp notoffset\n\tlea ebx, [offset]\noffset: \n\tmov ecx, dword ptr [eax]\nnotoffset:\n\tmov ecx, edx\n\tcall offset");
 
+    // let source_code = String::from("offset:\n\tmov eax, ebx\n\tmov ecx, dword ptr[offset]\nnoff:\n\tlea esi, [src]\n\tand ebx, ffh\n\tjmp noff\n\txor ebx, ebx\n\tjmp offset");
     let mut tokenizer = Tokenizer::new(&source_code);
     tokenizer.init();
 
@@ -412,16 +426,20 @@ fn main() {
 
     // draw::draw_line_internal(&mut src_metadata.output_src, &draw::Point { x : 1, y : 1}, &draw::Point {x : 7, y : 7}, 10);
 
-    let (x0, y0, y1, lane) = src_metadata.visualizer.visualization_data[0];
-    draw::draw_line_internal(
-        &mut src_metadata.output_src,
-        &draw::Point { x: y0, y: x0 - 1 },
-        &draw::Point {
-            x: y0,
-            y: (y1 - 1) as u32,
-        },
-        10,
-    );
+    determine_optimal_visualizer_lanes(&mut src_metadata.visualizer);
+
+    let mut lane_off = 15;
+    for &(x0, y0, y1, lane) in src_metadata.visualizer.visualization_data.iter() {
+        draw::draw_line_internal(
+            &mut src_metadata.output_src,
+            &draw::Point { x: y0, y: x0 - 1 },
+            &draw::Point {
+                x: y0,
+                y: (y1 - 1) as u32,
+            },
+            lane,
+        );
+    }
     println!("Printing with visualization enabled : ");
     src_metadata.print_final();
 }

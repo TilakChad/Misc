@@ -69,6 +69,7 @@ fn does_overlap(mut p0: Point, mut p1: Point) -> bool {
     p0.x < p1.y && p0.y > p1.x
 }
 
+#[derive(Debug)]
 enum OverlapInfo {
     None,
     FirstIsInside,
@@ -84,66 +85,120 @@ fn is_completely_inside(mut p0: Point, mut p1: Point) -> OverlapInfo {
         std::mem::swap(&mut p1.x, &mut p1.y);
     }
 
-    if p0.x < p1.x && p0.y < p1.y {
+    if p0.x >= p1.x && p0.y <= p1.y {
         return OverlapInfo::FirstIsInside;
-    } else if p1.x < p0.x && p1.y < p0.y {
+    } else if p1.x >= p0.x && p1.y <= p0.y {
         return OverlapInfo::LatterIsInside;
     } else {
         return OverlapInfo::None;
     }
 }
 
-fn determine_optimal_lanes(lines: Vec<Point>) -> Vec<u32> {
+// should it be written recursively??
+pub fn determine_optimal_lanes(lines: Vec<Point>) -> Vec<u32> {
     // So we have around 20 gaps before the text section actually happens for now
     // So there are possibly 10 free lines at the start
     // Check if any two lanes overlap and maintain their stack
     let mut final_lane = Vec::with_capacity(lines.len()); // Single allocation
 
     // Assume that the first jump will take the 2nd lane, we have
-    let mut current_lane = 16;
+    let current_lane = 16;
     final_lane.resize(lines.len(), current_lane);
 
+    println!("{:?}", lines);
     let lane_gap = 4;
-    let mut i: usize = 0;
 
-    while i < lines.len() {
-        final_lane[i] = current_lane;
-        current_lane = 16;
+    let mut pending: Vec<usize> = Vec::new();
+    let mut j: usize = 0;
 
-        // check with the previous lap and decide if one lies completely inside of another
-        let mut j: usize = 0;
-        while j < i {
-            if does_overlap(lines[j], lines[i]) {
-                let res = is_completely_inside(lines[i], lines[j]);
+    while j < lines.len() {
+        pending.push(j);
+        j = j + 1;
+    }
+
+    let mut counter = 0;
+    while !pending.is_empty() {
+        // choose an item
+        println!("pending : {:?}", pending);
+        let sel_index = pending.remove(0);
+
+        // check it with every others except itself ??
+
+        for (index, lane) in lines.iter().enumerate() {
+            if index == sel_index {
+                continue;
+            }
+
+            if does_overlap(lines[sel_index], *lane) {
+                let res = is_completely_inside(lines[sel_index], *lane);
+                // panic!("Same, no good reason");
+		println!("{:?}", res);
                 match res {
                     OverlapInfo::FirstIsInside => {
-                        if final_lane[i] <= final_lane[j] {
-                            final_lane[i] = final_lane[j] + lane_gap;
+                        if final_lane[sel_index] <= final_lane[index] {
+                            final_lane[index] = final_lane[sel_index] - lane_gap;
+                            pending.push(index);
                         }
-                        // else leave as it is
                     }
                     OverlapInfo::LatterIsInside => {
-                        if final_lane[j] <= final_lane[i] {
-                            final_lane[j] = final_lane[i] + lane_gap;
+                        if final_lane[sel_index] >= final_lane[index] {
+                            final_lane[sel_index] = final_lane[index] - lane_gap;
                         }
                     }
-                    OverlapInfo::None => {
-                        // Determine the larger one
-                        let del1 = lines[i].y - lines[i].x;
-                        let del2 = lines[j].y - lines[j].x;
 
+                    // Fix the subtraction with overflow
+                    OverlapInfo::None => {
+                        let del1 =
+                            (lines[sel_index].y as i32 - lines[sel_index].x as i32).abs() as u32;
+                        let del2 = (lane.y as i32 - lane.x as i32).abs() as u32;
                         if del1 > del2 {
-                            final_lane[i] = final_lane[j] + lane_gap;
-                        } else {
-                            final_lane[j] = final_lane[i] + lane_gap;
+                            final_lane[sel_index] = final_lane[index] - lane_gap;
+                        } else if del1 == del2 {
+                            final_lane[index] = final_lane[sel_index] - lane_gap;
                         }
+			else {
+			    final_lane[index] = final_lane[sel_index] - lane_gap;
+                            pending.push(index);
+			}
                     }
                 }
-            } else {
             }
-            j = j + 1;
         }
-        i = i + 1;
     }
+
+    //    while j < i {
+    //             if does_overlap(lines[j], lines[i]) {
+    //                 let res = is_completely_inside(lines[i], lines[j]);
+    //                 match res {
+    //                     OverlapInfo::FirstIsInside => {
+    //                         if final_lane[i] <= final_lane[j] {
+    //                             final_lane[i] = final_lane[j] + lane_gap;
+    //                         }
+    //                         // else leave as it is
+    //                     }
+    //                     OverlapInfo::LatterIsInside => {
+    //                         if final_lane[j] <= final_lane[i] {
+    //                             final_lane[j] = final_lane[i] + lane_gap;
+    //                         }
+    //                     }
+    //                     OverlapInfo::None => {
+    //                         // Determine the larger one
+    //                         let del1 = lines[i].y - lines[i].x;
+    //                         let del2 = lines[j].y - lines[j].x;
+
+    //                         if del1 > del2 {
+    //                             final_lane[i] = final_lane[j] + lane_gap;
+    //                         } else {
+    //                             final_lane[j] = final_lane[i] + lane_gap;
+    //                         }
+    //                     }
+    //                 }
+    //             } else {
+    //             }
+    //             j = j + 1;
+    //         }
+    //         i = i + 1;
+    //     }
+    println!("final lane : {:?}", final_lane);
     final_lane
 }
